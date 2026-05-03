@@ -31,8 +31,8 @@ jobs:
         uses: SonarSource/sonarcloud-github-action@master
         with:
           args: >
-            -Dsonar.projectKey=franzkade
-            -Dsonar.organization=IP_Scanner
+            -Dsonar.projectKey=internationalpayments
+            -Dsonar.organization=InternationalPayments
             -Dsonar.sources=.
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
