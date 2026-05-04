@@ -9,7 +9,14 @@ import {
   signOut
 } from "firebase/auth";
 
-import { collection, addDoc } from "firebase/firestore";
+import {
+  collection,
+  addDoc,
+  query,
+  where,
+  onSnapshot,
+  orderBy
+} from "firebase/firestore";
 
 function App() {
   const [page, setPage] = useState("register");
@@ -26,10 +33,13 @@ function App() {
   const [swiftCode, setSwiftCode] = useState("");
   const [currency, setCurrency] = useState("");
 
+  const [transactions, setTransactions] = useState([]);
+
   const [showPassword, setShowPassword] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [isRegistering, setIsRegistering] = useState(false);
 
+  // ================= VALIDATION REGEX =================
   const usernameRegex = /^[A-Za-z ]{2,50}$/;
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).{12,}$/;
@@ -40,17 +50,72 @@ function App() {
   const swiftCodeRegex = /^[A-Z0-9]{8,11}$/;
   const currencyRegex = /^[A-Z]{3}$/;
 
+  // ================= CLEAR FUNCTIONS =================
+  const clearRegistrationFields = () => {
+    setUsername("");
+    setEmail("");
+    setPassword("");
+    setIdNumber("");
+    setAccountNumber("");
+  };
+
+  const clearPaymentFields = () => {
+    setRecipient("");
+    setAmount("");
+    setSwiftCode("");
+    setCurrency("");
+  };
+
+  // ================= AUTH =================
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
       setCurrentUser(user);
 
       if (user && !isRegistering) {
         setPage("payment");
-      }
+      } /*else {
+        setMessage("");
+      }*/
     });
 
     return () => unsub();
   }, [isRegistering]);
+
+  // ================= PAGE CHANGE =================
+  useEffect(() => {
+    if (page === "register") {
+      clearRegistrationFields();
+    }
+
+    if (page === "login") {
+      setPassword("");
+    }
+
+    if (page !== "payment") {
+      clearPaymentFields();
+    }
+  }, [page]);
+
+  // ================= TRANSACTIONS =================
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const q = query(
+      collection(db, "payments"),
+      where("userId", "==", currentUser.uid),
+      orderBy("createdAt", "desc")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const list = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setTransactions(list);
+    });
+
+    return () => unsubscribe();
+  }, [currentUser]);
 
   // ================= REGISTER =================
   const register = async () => {
@@ -99,12 +164,8 @@ function App() {
       });
 
       await signOut(auth);
-      setCurrentUser(null);
 
-      // ✅ Friendly redirect message
-      setMessage("Directing you to the login page now...");
-      setPassword("");
-
+      setMessage("Redirecting to login...");
       setTimeout(() => {
         setMessage("");
         setPage("login");
@@ -112,31 +173,32 @@ function App() {
       }, 1200);
 
     } catch (err) {
-      setIsRegistering(false);
       setMessage(err.message);
+      setIsRegistering(false);
     }
   };
 
   // ================= LOGIN =================
-  const login = async () => {
-    if (!email || !password) {
-      setMessage("Please enter email and password.");
-      return;
-    }
+const login = async () => {
+  setMessage("");
 
-    if (!emailRegex.test(email)) {
-      setMessage("Please enter a valid email address.");
-      return;
-    }
+  if (!email || !password) {
+    setMessage("Please enter email and password.");
+    return;
+  }
 
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-      setMessage("Login successful.");
-    } catch (err) {
-      setMessage(err.message);
-    }
-  };
+  if (!emailRegex.test(email)) {
+    setMessage("Please enter a valid email address.");
+    return;
+  }
 
+  try {
+    await signInWithEmailAndPassword(auth, email, password);
+    setMessage("Login successful.");
+  } catch (err) {
+    setMessage(err.message);
+  }
+};
   // ================= PAYMENT =================
   const submitPayment = async () => {
     if (!recipient || !amount || !swiftCode || !currency) {
@@ -160,32 +222,11 @@ function App() {
     }
 
     if (!currencyRegex.test(currency.toUpperCase())) {
-      setMessage("Currency must be 3 letters, e.g. USD, EUR, ZAR.");
+      setMessage("Currency must be 3 letters (USD, EUR, ZAR).");
       return;
     }
 
     try {
-      const response = await fetch("http://localhost:3001/payment", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          recipient,
-          amount,
-          swiftCode: swiftCode.toUpperCase(),
-          currency: currency.toUpperCase()
-        })
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setMessage(data.message || "Backend validation failed.");
-        console.log(data.errors);
-        return;
-      }
-
       await addDoc(collection(db, "payments"), {
         userId: currentUser.uid,
         recipient,
@@ -195,19 +236,17 @@ function App() {
         createdAt: new Date()
       });
 
-      setMessage("Payment processed securely via backend.");
-      setRecipient("");
-      setAmount("");
-      setSwiftCode("");
-      setCurrency("");
+      setMessage("Payment saved successfully.");
     } catch (err) {
-      console.error(err);
-      setMessage("Backend error. Make sure backend is running on port 3001.");
+      setMessage("Payment failed.");
     }
   };
 
   // ================= LOGOUT =================
   const logout = async () => {
+    setMessage("");
+    clearRegistrationFields();
+    clearPaymentFields();
     await signOut(auth);
     setPage("register");
   };
@@ -218,74 +257,81 @@ function App() {
 
         {message && <div className="message">{message}</div>}
 
+        {/* REGISTER */}
         {!currentUser && page === "register" && (
           <>
             <h1>REGISTER</h1>
 
             <label>USERNAME</label>
-            <input value={username} onChange={e => setUsername(e.target.value)} />
+            <input value={username} autoComplete="off" onChange={e => setUsername(e.target.value)} />
 
             <label>EMAIL</label>
-            <input value={email} onChange={e => setEmail(e.target.value)} />
+            <input value={email} autoComplete="off" onChange={e => setEmail(e.target.value)} />
 
             <label>ID NUMBER</label>
-            <input value={idNumber} onChange={e => setIdNumber(e.target.value)} />
+            <input value={idNumber} autoComplete="off" onChange={e => setIdNumber(e.target.value)} />
 
             <label>ACCOUNT NUMBER</label>
-            <input value={accountNumber} onChange={e => setAccountNumber(e.target.value)} />
+            <input value={accountNumber} autoComplete="off" onChange={e => setAccountNumber(e.target.value)} />
 
             <label>PASSWORD</label>
-            <div className="password-container">
-              <input
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-              />
-              <span className="eye" onClick={() => setShowPassword(!showPassword)}>
-                {showPassword ? "🙈" : "👁️"}
-              </span>
-            </div>
+            <input type="password" value={password} autoComplete="new-password" onChange={e => setPassword(e.target.value)} />
 
             <button onClick={register}>Register</button>
 
-            <p>
-              Already have an account?{" "}
-              <span onClick={() => setPage("login")}>Login</span>
-            </p>
+            <button
+              className="secondary-btn"
+              onClick={() => {
+                setEmail("");
+                setPassword("");
+                setPage("login");
+              }}
+            >
+              Go to Login
+            </button>
           </>
         )}
 
+        {/* LOGIN */}
         {!currentUser && page === "login" && (
           <>
             <h1>LOGIN</h1>
 
-            <label>EMAIL</label>
-            <input value={email} onChange={e => setEmail(e.target.value)} />
+ <label>EMAIL</label>
+<input
+  value={email}
+  autoComplete="off"
+  onChange={e => {
+    setMessage("");
+    setEmail(e.target.value);
+  }}
+/>
 
-            <label>PASSWORD</label>
-            <div className="password-container">
-              <input
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-              />
-              <span className="eye" onClick={() => setShowPassword(!showPassword)}>
-                {showPassword ? "🙈" : "👁️"}
-              </span>
-            </div>
+<label>PASSWORD</label>
+<input
+  type="password"
+  value={password}
+  autoComplete="current-password"
+  onChange={e => {
+    setMessage("");
+    setPassword(e.target.value);
+  }}
+/>
 
-            <button onClick={login}>Login</button>
+<button type="button" onClick={login}>Login</button>
+
             <button className="secondary-btn" onClick={() => setPage("register")}>
               Back
             </button>
           </>
         )}
 
-        {currentUser && page === "payment" && (
+        {/* PAYMENT */}
+        {currentUser && (
           <>
             <h1>MAKE A PAYMENT</h1>
 
-            <label>RECIPIENT NAME</label>
+            <label>RECIPIENT</label>
             <input value={recipient} onChange={e => setRecipient(e.target.value)} />
 
             <label>AMOUNT</label>
@@ -298,9 +344,38 @@ function App() {
             <input value={currency} onChange={e => setCurrency(e.target.value.toUpperCase())} />
 
             <button onClick={submitPayment}>Pay Now</button>
-            <button className="secondary-btn" onClick={logout}>
-              Logout
-            </button>
+            <button className="secondary-btn" onClick={logout}>Logout</button>
+
+            <div style={{ marginTop: "30px" }}>
+              <h2>TRANSACTION HISTORY</h2>
+
+              {transactions.length === 0 ? (
+                <p>No payments yet.</p>
+              ) : (
+                transactions.map((t) => (
+                  <div
+                    key={t.id}
+                    style={{
+                      border: "1px solid #ccc",
+                      padding: "12px",
+                      marginBottom: "12px",
+                      borderRadius: "10px",
+                      backgroundColor: "#f9f9f9",
+                      textAlign: "left"
+                    }}
+                  >
+                    <p><strong>Recipient:</strong> {t.recipient}</p>
+                    <p><strong>Amount:</strong> {t.currency} {Number(t.amount).toFixed(2)}</p>
+                    <p><strong>SWIFT:</strong> {t.swiftCode}</p>
+                    <p><strong>Currency:</strong> {t.currency}</p>
+                    <p>
+                      <strong>Date:</strong>{" "}
+                      {t.createdAt?.toDate().toLocaleString()}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
           </>
         )}
 
