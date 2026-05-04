@@ -28,8 +28,8 @@ jobs:
         run: |
           cd backend
           npm install
-
-          - name: SonarQube Scan
+          
+        - name: SonarQube Scan
             uses: SonarSource/sonoarqube-scan-action@10e2db214292b813e594b1bd820017798e3df0bf # v6.0.0
           env:
-            SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+            SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}     
